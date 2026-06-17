@@ -1,0 +1,58 @@
+# Full Week 2 stack: 3 backend instances behind our custom Java load balancer.
+#
+#   docker compose up --build          # build images + start everything
+#   curl localhost:8088/api/compute/primes?limit=100000   # goes through the LB
+#   curl localhost:8088/lb/status                          # see distribution
+#
+# The LB reaches backends by their service name (backend-1/2/3) over Compose's
+# built-in DNS on the private network — no host ports needed on the backends.
+# Only the LB is published to the host, on 8088 (host 8080 is used by another
+# stack on this machine; change the left side of "8088:8080" if you like).
+
+services:
+  backend-1:
+    build: ./backend-service
+    environment:
+      INSTANCE_ID: backend-1
+      JAVA_TOOL_OPTIONS: "-Xmx256m"   # keep 3 JVMs light on a dev box
+    networks: [origin-net]
+
+  backend-2:
+    build: ./backend-service
+    environment:
+      INSTANCE_ID: backend-2
+      JAVA_TOOL_OPTIONS: "-Xmx256m"
+    networks: [origin-net]
+
+  backend-3:
+    build: ./backend-service
+    environment:
+      INSTANCE_ID: backend-3
+      JAVA_TOOL_OPTIONS: "-Xmx256m"
+    networks: [origin-net]
+
+  load-balancer:
+    build: ./load-balancer
+    ports:
+      - "8088:8080"          # host:container — hit the LB at http://localhost:8088
+    environment:
+      LB_PORT: 8080
+      LB_BACKENDS: "http://backend-1:8080,http://backend-2:8080,http://backend-3:8080"
+      LB_STRATEGY: round-robin           # or: least-connections
+      LB_HEALTH_PATH: /actuator/health
+      LB_HEALTH_INTERVAL_MS: 5000
+      JAVA_TOOL_OPTIONS: "-Xmx128m"
+    depends_on:
+      # Start the LB only once every backend reports healthy (backends define
+      # a HEALTHCHECK in their Dockerfile, which is what "service_healthy" reads).
+      backend-1:
+        condition: service_healthy
+      backend-2:
+        condition: service_healthy
+      backend-3:
+        condition: service_healthy
+    networks: [origin-net]
+
+networks:
+  origin-net:
+    driver: bridge

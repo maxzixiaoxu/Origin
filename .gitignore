@@ -1,0 +1,3 @@
+# IntelliJ IDEA project config — machine-specific, not for the repo
+.idea/
+*.iml
