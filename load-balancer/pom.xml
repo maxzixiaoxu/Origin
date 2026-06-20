@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.origin</groupId>
+    <artifactId>load-balancer</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <packaging>jar</packaging>
+    <name>load-balancer</name>
+    <description>Custom Java load balancer: round-robin / least-connections with active health checks</description>
+
+    <!--
+      No <dependencies> block on purpose. The whole LB is built on the JDK:
+        - com.sun.net.httpserver.HttpServer  (accept incoming requests)
+        - java.net.http.HttpClient           (forward to backends)
+        - java.util.concurrent               (virtual threads, schedulers, atomics)
+      Fewer moving parts, and every line is ours.
+    -->
+
+    <properties>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <build>
+        <finalName>load-balancer</finalName>
+        <plugins>
+            <!-- Write Main-Class into the jar manifest so `java -jar load-balancer.jar` runs it. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.origin.lb.LoadBalancer</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
