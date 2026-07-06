@@ -1,0 +1,107 @@
+# Distributed job queue -- local stack.
+#
+# Services are added phase by phase; this file currently brings up the data
+# layer and applies migrations, which is everything the broker needs to run
+# against. `make up` waits for health checks, so migrations never race an
+# unready Postgres.
+#
+# HOST PORTS: every published port defaults into a 5xxxx block rather than the
+# conventional 5432/6379/3000. Developer machines very often already have a
+# Postgres or Redis on the default port, and silently binding over one -- or
+# failing to start with a port-in-use error -- is a bad first-run experience.
+# Container-internal ports stay conventional; only the host side is remapped.
+# Override any of these via the environment or a .env file (see .env.example).
+
+name: jobq
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: jobq
+      POSTGRES_PASSWORD: jobq
+      POSTGRES_DB: jobq
+      # Postgres defaults to a locale-aware collation that makes text
+      # comparisons noticeably slower and is irrelevant for the ASCII
+      # identifiers used here.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    command:
+      - postgres
+      # Modest tuning so benchmark numbers reflect the queue design rather than
+      # Postgres running with 128MB of shared buffers.
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=8MB
+      # Surface slow queries during load tests instead of guessing.
+      - -c
+      - log_min_duration_statement=500
+    ports:
+      - "${JOBQ_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobq -d jobq"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  redis:
+    image: redis:7-alpine
+    command:
+      - redis-server
+      # AOF makes a restart warm rather than empty. Correctness does NOT depend
+      # on it: Redis is a rebuildable cache here and the reconciler replays
+      # state from Postgres on boot. This is a speed optimisation, not a
+      # durability guarantee, and the system is tested with FLUSHALL to keep
+      # that claim honest.
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --save
+      - ""
+      # The single most important line in this file.
+      #
+      # Under an eviction policy, Redis silently drops keys when it hits
+      # maxmemory -- and the keys it drops would be ready sets and lease sets,
+      # i.e. jobs disappearing from the hot path with no error anywhere. With
+      # noeviction, writes fail loudly instead, the enqueue returns an error,
+      # and the caller finds out. A visible failure beats invisible job loss.
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - noeviction
+    ports:
+      - "${JOBQ_REDIS_PORT:-56379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 2s
+
+  # One-shot migration runner. Go owns the schema; Rails never migrates.
+  migrate:
+    image: migrate/migrate:v4.18.1
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      - -path
+      - /migrations
+      - -database
+      - postgres://jobq:jobq@postgres:5432/jobq?sslmode=disable
+      - up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: on-failure
+
+volumes:
+  pgdata:
+  redisdata:
