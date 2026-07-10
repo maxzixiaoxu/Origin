@@ -1,0 +1,47 @@
+# Build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Go
+vendor/
+coverage.txt
+coverage.html
+
+# Generated protobuf stubs are committed on purpose (see docs/design-decisions.md),
+# so nothing is ignored here.
+
+# Rails
+services/admin/log/*
+!services/admin/log/.keep
+services/admin/tmp/*
+!services/admin/tmp/.keep
+services/admin/storage/*
+!services/admin/storage/.keep
+services/admin/.bundle/
+services/admin/vendor/bundle/
+services/admin/public/assets/
+services/admin/node_modules/
+services/admin/.env*
+!services/admin/.env.example
+
+# Local environment
+.env
+.env.local
+
+# Benchmark artifacts (RESULTS.md is committed; raw runs are not)
+bench/raw/
+bench/*.json
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Agent tooling noise
+.claude/
+.claude-flow/
+.swarm/
