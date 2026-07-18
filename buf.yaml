@@ -1,0 +1,17 @@
+# buf is used instead of protoc because it is a pure-Go toolchain: `go install`
+# gets you a working compiler with no C++ protoc binary to source per platform.
+version: v2
+
+modules:
+  - path: proto
+
+lint:
+  use:
+    - STANDARD
+
+breaking:
+  # Compare whole files. The generated stubs are committed, so a breaking change
+  # to the contract should be a deliberate, reviewable act rather than something
+  # discovered when a worker fails to unmarshal in production.
+  use:
+    - FILE

@@ -1,0 +1,402 @@
+syntax = "proto3";
+
+// Package queue.v1 is the contract between the queue service and its clients:
+// workers pulling jobs, the REST gateway serving Rails, and the load generator.
+//
+// Two shapes recur deliberately and are worth reading for:
+//
+//   1. Batched lease operations. ExtendLeases takes a list, not a single ID,
+//      because a worker running 64 jobs must not open 64 renewal calls. One
+//      call per heartbeat tick keeps RPC load proportional to workers rather
+//      than to in-flight jobs.
+//
+//   2. Explicit "why nothing happened" signals. DequeueResponse carries a
+//      ThrottleReason and a retry_after_ms rather than just returning an empty
+//      list. A worker that knows it was rate-limited for 200ms can sleep
+//      exactly that long; a worker that only sees "empty" has to guess, and
+//      guessing means either a hot loop against Redis or needless latency.
+package queue.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/maxzixiaoxu/Origin/gen/queue/v1;queuev1";
+
+// QueueService is the single entry point to the queue. Workers use the
+// dequeue/ack/nack/extend path; the REST gateway and admin tooling use the
+// rest.
+service QueueService {
+  // --- worker hot path ---
+
+  // Enqueue submits one job. Idempotent when idempotency_key is set.
+  rpc Enqueue(EnqueueRequest) returns (EnqueueResponse);
+
+  // EnqueueBatch submits many jobs in one round trip. Partial success is
+  // reported per item rather than failing the whole batch, so one malformed
+  // job does not reject 999 good ones.
+  rpc EnqueueBatch(EnqueueBatchRequest) returns (EnqueueBatchResponse);
+
+  // Dequeue leases up to max_jobs for the caller. Returns an empty list plus a
+  // reason when the queue is empty, paused, throttled, or at its concurrency
+  // ceiling.
+  rpc Dequeue(DequeueRequest) returns (DequeueResponse);
+
+  // Ack marks a leased job succeeded. Rejected if the caller no longer holds
+  // the lease.
+  rpc Ack(AckRequest) returns (AckResponse);
+
+  // Nack reports failure and schedules a retry, or dead-letters the job when
+  // attempts are exhausted or the error was permanent.
+  rpc Nack(NackRequest) returns (NackResponse);
+
+  // ExtendLeases renews every lease the caller still holds, in one call.
+  rpc ExtendLeases(ExtendLeasesRequest) returns (ExtendLeasesResponse);
+
+  // --- admin / observation ---
+
+  rpc GetJob(GetJobRequest) returns (GetJobResponse);
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+
+  // RetryJob returns a dead or failed job to the ready set, resetting its
+  // attempt counter. This is what dead-letter replay calls.
+  rpc RetryJob(RetryJobRequest) returns (RetryJobResponse);
+
+  rpc ListQueues(ListQueuesRequest) returns (ListQueuesResponse);
+
+  // UpsertQueue creates or reconfigures a queue. All settings take effect
+  // immediately; no restart is required to pause a queue or change its rate
+  // limit during an incident.
+  rpc UpsertQueue(UpsertQueueRequest) returns (UpsertQueueResponse);
+
+  // QueueDepth reports live counts straight from Redis, for the dashboard's
+  // real-time panels.
+  rpc QueueDepth(QueueDepthRequest) returns (QueueDepthResponse);
+
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// --- enums ----------------------------------------------------------------
+
+// JobStatus mirrors the Postgres job_status enum and jobtypes.Status in Go.
+// All three must change together.
+enum JobStatus {
+  JOB_STATUS_UNSPECIFIED = 0;
+  JOB_STATUS_PENDING = 1;
+  JOB_STATUS_SCHEDULED = 2;
+  JOB_STATUS_RUNNING = 3;
+  JOB_STATUS_SUCCEEDED = 4;
+  JOB_STATUS_FAILED = 5;
+  JOB_STATUS_DEAD = 6;
+  JOB_STATUS_CANCELLED = 7;
+}
+
+// Outcome describes how one execution attempt ended.
+enum Outcome {
+  OUTCOME_UNSPECIFIED = 0;
+  OUTCOME_SUCCEEDED = 1;
+  OUTCOME_FAILED = 2;
+  OUTCOME_TIMEOUT = 3;
+  // OUTCOME_LEASE_EXPIRED is recorded by the reaper, not by a worker. Keeping
+  // it distinct from OUTCOME_FAILED is what makes worker death measurable
+  // separately from handler bugs.
+  OUTCOME_LEASE_EXPIRED = 4;
+  OUTCOME_PANIC = 5;
+  OUTCOME_CANCELLED = 6;
+}
+
+// ThrottleReason explains an empty Dequeue so the caller can back off
+// intelligently instead of polling blindly.
+enum ThrottleReason {
+  THROTTLE_REASON_UNSPECIFIED = 0;
+  // No jobs were available. Poll again after the client's idle interval.
+  THROTTLE_REASON_EMPTY = 1;
+  // The per-queue token bucket is dry. Honour retry_after_ms exactly.
+  THROTTLE_REASON_RATE_LIMIT = 2;
+  // max_concurrency reached across all workers. More capacity will not help;
+  // wait for in-flight jobs to finish.
+  THROTTLE_REASON_CONCURRENCY = 3;
+  // An operator paused the queue. Back off hard; this is not transient.
+  THROTTLE_REASON_PAUSED = 4;
+}
+
+// --- core types -----------------------------------------------------------
+
+// Envelope is everything a worker needs to execute a job, and nothing more.
+// Bookkeeping fields such as last_error stay in Postgres.
+message Envelope {
+  string id = 1;
+  string queue = 2;
+  string type = 3;
+  // Opaque JSON. Left as bytes rather than google.protobuf.Struct so the
+  // service never parses payloads it does not interpret.
+  bytes payload = 4;
+  int32 attempt = 5;
+  int32 max_attempts = 6;
+  int32 priority = 7;
+  google.protobuf.Timestamp enqueued_at = 8;
+  // Deadline by which the worker must ack, nack, or extend.
+  google.protobuf.Timestamp lease_expires_at = 9;
+  string trace_id = 10;
+}
+
+// Job is the full durable record, for admin and dashboard reads.
+message Job {
+  string id = 1;
+  string queue = 2;
+  string type = 3;
+  bytes payload = 4;
+  JobStatus status = 5;
+  int32 priority = 6;
+  int32 attempt = 7;
+  int32 max_attempts = 8;
+  string idempotency_key = 9;
+  google.protobuf.Timestamp run_at = 10;
+  google.protobuf.Timestamp lease_expires_at = 11;
+  string locked_by = 12;
+  string last_error = 13;
+  bytes result = 14;
+  string trace_id = 15;
+  google.protobuf.Timestamp enqueued_at = 16;
+  google.protobuf.Timestamp started_at = 17;
+  google.protobuf.Timestamp finished_at = 18;
+}
+
+// Attempt is one row of the execution audit trail.
+message Attempt {
+  int64 id = 1;
+  string job_id = 2;
+  int32 attempt = 3;
+  string worker_id = 4;
+  Outcome outcome = 5;
+  string error = 6;
+  google.protobuf.Timestamp started_at = 7;
+  google.protobuf.Timestamp finished_at = 8;
+  int32 duration_ms = 9;
+}
+
+// QueueConfig is the live, editable configuration of one queue.
+message QueueConfig {
+  string name = 1;
+  int32 max_concurrency = 2;
+  // Unset means unlimited. Present together or not at all.
+  optional int32 rate_limit_per_sec = 3;
+  optional int32 rate_limit_burst = 4;
+  int32 max_attempts = 5;
+  int32 visibility_timeout_sec = 6;
+  int32 backoff_base_ms = 7;
+  int32 backoff_cap_ms = 8;
+  bool paused = 9;
+  string description = 10;
+}
+
+// Depth is the live per-state size of a queue, read from Redis.
+message Depth {
+  string queue = 1;
+  int64 ready = 2;
+  int64 scheduled = 3;
+  // running is the lease-set cardinality, i.e. current concurrency.
+  int64 running = 4;
+}
+
+// --- enqueue --------------------------------------------------------------
+
+message EnqueueRequest {
+  string queue = 1;
+  string type = 2;
+  bytes payload = 3;
+
+  // Lower dispatches first; 0-9, default 5. Out-of-range values are clamped
+  // rather than rejected, so a client bug degrades ordering instead of
+  // dropping work.
+  optional int32 priority = 4;
+
+  // Defaults to the queue's max_attempts when unset.
+  optional int32 max_attempts = 5;
+
+  // When set, re-submitting the same key to the same queue returns the
+  // original job instead of creating a second one.
+  optional string idempotency_key = 6;
+
+  // When set in the future, the job starts as SCHEDULED.
+  google.protobuf.Timestamp run_at = 7;
+
+  // Propagated from the originating HTTP request; stored on the job so logs
+  // across Rails, the queue service, and the worker share one identifier.
+  string trace_id = 8;
+}
+
+message EnqueueResponse {
+  string id = 1;
+  JobStatus status = 2;
+  // True when an idempotency key matched an existing job and nothing new was
+  // created. Surfaced so callers can distinguish "accepted" from "already had
+  // this" rather than silently assuming success.
+  bool deduplicated = 3;
+  int64 queue_depth = 4;
+}
+
+message EnqueueBatchRequest {
+  repeated EnqueueRequest jobs = 1;
+}
+
+// EnqueueBatchResult reports per-item success so one bad job does not fail the
+// batch.
+message EnqueueBatchResult {
+  int32 index = 1;
+  EnqueueResponse response = 2;
+  // Empty on success.
+  string error = 3;
+}
+
+message EnqueueBatchResponse {
+  repeated EnqueueBatchResult results = 1;
+  int32 succeeded = 2;
+  int32 failed = 3;
+}
+
+// --- dequeue --------------------------------------------------------------
+
+message DequeueRequest {
+  // Queues to pull from, tried in the given order. Listing several lets one
+  // worker serve a high-priority queue first and fall back to a bulk queue.
+  repeated string queues = 1;
+  int32 max_jobs = 2;
+  string worker_id = 3;
+  // How long the server may hold the request open waiting for work. Zero means
+  // return immediately.
+  google.protobuf.Duration wait = 4;
+}
+
+message DequeueResponse {
+  repeated Envelope jobs = 1;
+  // Set when jobs is empty. Tells the caller how long to wait and why.
+  ThrottleReason throttle_reason = 2;
+  int64 retry_after_ms = 3;
+}
+
+// --- completion -----------------------------------------------------------
+
+message AckRequest {
+  string job_id = 1;
+  // Checked against the recorded lease holder. A worker whose lease was reaped
+  // must not be able to mark the job done after another worker took it.
+  string worker_id = 2;
+  bytes result = 3;
+  int64 duration_ms = 4;
+}
+
+message AckResponse {
+  // False when the lease had already been reclaimed. The worker should discard
+  // its result rather than retrying the ack.
+  bool accepted = 1;
+  string reason = 2;
+}
+
+message NackRequest {
+  string job_id = 1;
+  string worker_id = 2;
+  string error = 3;
+  // Skip the retry ladder and dead-letter immediately. Set for errors the
+  // handler knows cannot succeed on retry, such as a malformed payload.
+  bool permanent = 4;
+  // Requeue with no backoff delay. Used during graceful drain, where the job
+  // did not fail -- the worker is simply shutting down and wants it picked up
+  // immediately instead of after a lease timeout.
+  bool requeue_immediately = 5;
+  int64 duration_ms = 6;
+  Outcome outcome = 7;
+}
+
+message NackResponse {
+  bool accepted = 1;
+  // SCHEDULED when a retry was queued, DEAD when attempts were exhausted.
+  JobStatus status = 2;
+  google.protobuf.Timestamp retry_at = 3;
+  string reason = 4;
+}
+
+message ExtendLeasesRequest {
+  string worker_id = 1;
+  repeated string job_ids = 2;
+}
+
+message LeaseResult {
+  string job_id = 1;
+  // False means the lease was lost -- reaped and possibly already reassigned.
+  // The worker must cancel that job's context immediately; continuing would
+  // duplicate work another worker is now doing.
+  bool extended = 2;
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+message ExtendLeasesResponse {
+  repeated LeaseResult results = 1;
+}
+
+// --- admin ----------------------------------------------------------------
+
+message GetJobRequest {
+  string job_id = 1;
+  bool include_attempts = 2;
+}
+
+message GetJobResponse {
+  Job job = 1;
+  repeated Attempt attempts = 2;
+}
+
+message CancelJobRequest {
+  string job_id = 1;
+}
+
+message CancelJobResponse {
+  bool cancelled = 1;
+  // Explains a false result, e.g. the job had already finished.
+  string reason = 2;
+}
+
+message RetryJobRequest {
+  string job_id = 1;
+  // Reset attempt to zero rather than continuing the existing ladder.
+  bool reset_attempts = 2;
+}
+
+message RetryJobResponse {
+  bool retried = 1;
+  string reason = 2;
+}
+
+message ListQueuesRequest {}
+
+message ListQueuesResponse {
+  repeated QueueConfig queues = 1;
+}
+
+message UpsertQueueRequest {
+  QueueConfig config = 1;
+}
+
+message UpsertQueueResponse {
+  QueueConfig config = 1;
+  bool created = 2;
+}
+
+message QueueDepthRequest {
+  // Empty means all queues.
+  repeated string queues = 1;
+}
+
+message QueueDepthResponse {
+  repeated Depth depths = 1;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool healthy = 1;
+  bool redis_ok = 2;
+  bool postgres_ok = 3;
+  // Whether this replica currently holds the singleton-loop leadership lock.
+  bool is_leader = 4;
+  string instance_id = 5;
+}
