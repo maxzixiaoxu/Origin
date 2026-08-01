@@ -210,6 +210,15 @@ func (b *Broker) Enqueue(ctx context.Context, req EnqueueRequest) (*EnqueueResul
 		payload = []byte("{}")
 	}
 
+	// The broker owns the clock, so it -- not the store -- decides whether this
+	// job starts queued or scheduled. Both the durable row and the Redis
+	// placement below are derived from this one comparison, which is what keeps
+	// them from ever disagreeing.
+	status := jobtypes.StatusPending
+	if runAt.After(now) {
+		status = jobtypes.StatusScheduled
+	}
+
 	// Step 1: durability. Nothing becomes dispatchable before this succeeds.
 	job, created, err := b.store.CreateJob(ctx, &store.NewJob{
 		ID:             uuid.NewString(),
@@ -221,6 +230,7 @@ func (b *Broker) Enqueue(ctx context.Context, req EnqueueRequest) (*EnqueueResul
 		IdempotencyKey: req.IdempotencyKey,
 		RunAt:          runAt,
 		TraceID:        req.TraceID,
+		Status:         status,
 	})
 	if err != nil {
 		return nil, err
@@ -276,9 +286,16 @@ func (b *Broker) Enqueue(ctx context.Context, req EnqueueRequest) (*EnqueueResul
 	}
 
 	state, depth := parseEnqueueResult(res)
-	status := jobtypes.StatusPending
-	if state == 0 {
-		status = jobtypes.StatusScheduled
+
+	// Go and Lua evaluate the same comparison against the same instant, so the
+	// script's placement must match the status written to Postgres. If it ever
+	// does not, the durable row and the Redis set disagree about what this job
+	// is -- worth a loud log rather than silently trusting one of them.
+	scriptSaysScheduled := state == 0
+	if scriptSaysScheduled != (status == jobtypes.StatusScheduled) {
+		b.log.ErrorContext(ctx, "enqueue: redis placement disagrees with stored status",
+			"job_id", job.ID, "queue", req.Queue,
+			"stored_status", status, "script_scheduled", scriptSaysScheduled)
 	}
 
 	return &EnqueueResult{JobID: job.ID, Status: status, Depth: depth}, nil

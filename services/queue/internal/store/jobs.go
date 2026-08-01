@@ -68,6 +68,21 @@ type NewJob struct {
 	IdempotencyKey string
 	RunAt          time.Time
 	TraceID        string
+
+	// Status is supplied by the caller rather than derived here.
+	//
+	// This layer deliberately makes no time-based decisions. Deciding
+	// pending-vs-scheduled requires knowing "now", and the broker already owns
+	// a clock -- one that is injectable, so lease expiry and scheduling can be
+	// tested without sleeping. Reading time.Now() here would mean the store
+	// silently disagreed with the broker whenever the two clocks differed,
+	// which is exactly what happened before this field existed: a job scheduled
+	// for the future was stored as 'pending', and reconciliation then made it
+	// immediately dispatchable because its row did not say 'scheduled'.
+	//
+	// Keeping the clock in one place is what makes that class of bug
+	// impossible rather than merely fixed.
+	Status jobtypes.Status
 }
 
 // CreateJob inserts a job, or returns the existing one when its idempotency key
@@ -82,9 +97,12 @@ type NewJob struct {
 //
 // Returns the job and whether this call created it.
 func (s *Store) CreateJob(ctx context.Context, n *NewJob) (*Job, bool, error) {
-	status := jobtypes.StatusPending
-	if n.RunAt.After(time.Now()) {
-		status = jobtypes.StatusScheduled
+	status := n.Status
+	if status == "" {
+		status = jobtypes.StatusPending
+	}
+	if !status.Valid() {
+		return nil, false, fmt.Errorf("invalid status %q for new job", status)
 	}
 
 	const insertSQL = `
