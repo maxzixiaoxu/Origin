@@ -143,10 +143,13 @@ func (b *Broker) Nack(ctx context.Context, req NackRequest) (*NackResult, error)
 			return nil, fmt.Errorf("%w: job %s", ErrLeaseLost, req.JobID)
 		}
 
+		// A permanent failure needs no prefix: the handler's error already
+		// begins with "permanent:", and status=dead says the rest. Adding one
+		// produced "permanent failure: permanent: ..." in the dashboard.
+		// Exhaustion does need context, because the error is just the last
+		// attempt's message and gives no hint that the retries ran out.
 		reason := req.Error
-		if req.Permanent {
-			reason = "permanent failure: " + reason
-		} else {
+		if !req.Permanent {
 			reason = fmt.Sprintf("exhausted %d attempts: %s", job.MaxAttempts, reason)
 		}
 
