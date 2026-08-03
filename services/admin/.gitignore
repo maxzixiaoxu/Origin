@@ -1,0 +1,32 @@
+# Rails' standard ignores. This file was missing because the app was generated
+# with `rails new --skip-git`, which skips creating it -- and the repository
+# root .gitignore did not cover config/master.key. That is how the key was
+# committed. Keeping Rails' own list here means the next generated file that
+# should be secret is excluded by default rather than by memory.
+
+# NEVER commit. Decrypts config/credentials.yml.enc.
+/config/master.key
+/config/credentials/*.key
+
+/log/*
+/tmp/*
+!/log/.keep
+!/tmp/.keep
+/tmp/pids/*
+!/tmp/pids/.keep
+
+/storage/*
+!/storage/.keep
+
+/public/assets
+/node_modules
+/.bundle
+/vendor/bundle
+
+.env
+.env.*
+!.env.example
+
+# Ignore key files for decrypting credentials and more.
+/config/*.key
+

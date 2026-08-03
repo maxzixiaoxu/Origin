@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Job Queue Admin</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <%= csrf_meta_tags %>
+    <%= csp_meta_tag %>
+    <%= stylesheet_link_tag "application" %>
+    <%= javascript_importmap_tags %>
+  </head>
+
+  <body>
+    <nav class="nav">
+      <span class="brand"><%= link_to "jobq", root_path %></span>
+      <%= link_to "Overview", root_path, class: nav_class("dashboard") %>
+      <%= link_to "Upload", new_upload_path, class: nav_class("uploads") %>
+      <%= link_to "Jobs", jobs_path, class: nav_class("jobs") %>
+      <%= link_to "Queues", queues_path, class: nav_class("queues") %>
+      <%= link_to "Dead letter", dead_letter_index_path, class: nav_class("dead_letter") %>
+    </nav>
+
+    <main>
+      <% if flash[:notice] %><div class="flash ok"><%= flash[:notice] %></div><% end %>
+      <% if flash[:alert] %><div class="flash bad"><%= flash[:alert] %></div><% end %>
+
+      <%= yield %>
+    </main>
+
+    <footer class="foot">
+      Go workers + Redis + PostgreSQL &middot; request <code><%= Current.request_id&.first(8) %></code>
+    </footer>
+  </body>
+</html>

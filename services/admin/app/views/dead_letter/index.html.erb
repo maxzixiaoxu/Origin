@@ -1,0 +1,72 @@
+<h1>Dead letter</h1>
+
+<p class="lede">
+  Jobs that exhausted their retries, or failed with an error the handler
+  classified as permanent. A permanent failure skips the retry ladder entirely
+  and lands here on the first attempt.
+</p>
+
+<% if @by_error.any? %>
+  <h2>Most common errors</h2>
+  <%#
+    Grouping by message makes a systemic failure obvious. Two hundred dead jobs
+    sharing one error is a single broken dependency; two hundred distinct errors
+    is something else, and the response to each is different.
+  %>
+  <table class="grid">
+    <thead><tr><th>count</th><th>error</th></tr></thead>
+    <tbody>
+      <% @by_error.each do |message, count| %>
+        <tr><td><b><%= count %></b></td><td class="small"><%= truncate(message.to_s, length: 160) %></td></tr>
+      <% end %>
+    </tbody>
+  </table>
+<% end %>
+
+<div class="row gap">
+  <%= form_with url: dead_letter_index_path, method: :get, class: "filters" do |f| %>
+    <%= f.select :queue, options_for_select([["all queues", ""]] + @queues, params[:queue]) %>
+    <%= f.submit "Filter", class: "btn" %>
+  <% end %>
+
+  <% if @total.positive? %>
+    <%= button_to "Replay up to #{DeadLetterController::BULK_LIMIT}",
+          bulk_retry_dead_letter_index_path(queue: params[:queue]),
+          class: "btn primary",
+          form: { data: { turbo_confirm: "Replay these jobs? If the underlying problem is not fixed they will fail again." } } %>
+  <% end %>
+</div>
+
+<p class="dim"><%= @total %> dead job<%= "s" unless @total == 1 %></p>
+
+<table class="grid">
+  <thead>
+    <tr><th>job</th><th>type</th><th>queue</th><th>attempts</th><th>failed</th><th>error</th><th></th></tr>
+  </thead>
+  <tbody>
+    <% @jobs.each do |job| %>
+      <tr>
+        <td><%= link_to short_id(job.id), job_path(job) %></td>
+        <td><%= job.job_type %></td>
+        <td><%= job.queue_name %></td>
+        <td><%= job.attempt %>/<%= job.max_attempts %></td>
+        <td><%= ago(job.finished_at) %></td>
+        <td class="small"><%= truncate(job.last_error.to_s, length: 90) %></td>
+        <td><%= button_to "Retry", retry_job_path(job), class: "btn small" %></td>
+      </tr>
+    <% end %>
+  </tbody>
+</table>
+
+<% if @jobs.empty? %>
+  <p class="dim">Nothing dead-lettered. Good.</p>
+<% end %>
+
+<div class="pager">
+  <% if @page > 1 %>
+    <%= link_to "← previous", dead_letter_index_path(queue: params[:queue], page: @page - 1), class: "btn ghost" %>
+  <% end %>
+  <% if @total > @page * DeadLetterController::PER_PAGE %>
+    <%= link_to "next →", dead_letter_index_path(queue: params[:queue], page: @page + 1), class: "btn ghost" %>
+  <% end %>
+</div>

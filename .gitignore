@@ -14,6 +14,12 @@ coverage.html
 # so nothing is ignored here.
 
 # Rails
+#
+# config/master.key decrypts credentials.yml.enc and must never be committed.
+# It once was -- see services/admin/.gitignore for how -- so it is listed both
+# here and there.
+services/admin/config/master.key
+services/admin/config/credentials/*.key
 services/admin/log/*
 !services/admin/log/.keep
 services/admin/tmp/*

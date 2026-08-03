@@ -1,0 +1,43 @@
+<%#
+  Refreshes itself once a second while any job is still running, and stops
+  entirely once all three are terminal. An idle page then costs nothing, which
+  is why this is a self-terminating poll rather than a fixed interval.
+%>
+<%= turbo_frame_tag "derivatives",
+      src: (status_upload_path(anchor_id) if pending),
+      refresh: (pending ? "1s" : nil),
+      data: { turbo_poll_interval: (1000 if pending) } do %>
+
+  <div class="cards">
+    <% derivatives.each do |d| %>
+      <div class="card derivative <%= d[:status] %>">
+        <div class="row">
+          <strong><%= d[:label] %></strong>
+          <span class="dim">p<%= d[:priority] %> &middot; <%= d[:width] %>px</span>
+          <%= status_badge(d[:status]) %>
+        </div>
+
+        <% if d[:url] %>
+          <img src="<%= d[:url] %>" alt="<%= d[:label] %>" class="thumb">
+          <div class="meta">
+            <%= d[:dimensions] %> &middot; <%= bytes(d[:bytes]) %>
+          </div>
+          <div class="meta dim">
+            <%= ms(d[:total_ms]) %> total, <%= ms(d[:resize_ms]) %> resizing
+          </div>
+          <div class="meta dim">on <%= d[:worker] %></div>
+        <% elsif d[:status] == "dead" %>
+          <div class="err"><%= d[:error] %></div>
+        <% else %>
+          <div class="pending">working…</div>
+        <% end %>
+
+        <%= link_to "details", job_path(d[:job].id), class: "dim small" %>
+      </div>
+    <% end %>
+  </div>
+
+  <% unless pending %>
+    <p class="dim small">All derivatives finished.</p>
+  <% end %>
+<% end %>

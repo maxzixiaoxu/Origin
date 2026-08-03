@@ -1,0 +1,45 @@
+<h1>Jobs</h1>
+
+<%= form_with url: jobs_path, method: :get, class: "filters" do |f| %>
+  <%= f.text_field :q, value: @filters[:q], placeholder: "job id, type, or trace id" %>
+  <%= f.select :queue, options_for_select([["all queues", ""]] + @queues, @filters[:queue]) %>
+  <%= f.select :status, options_for_select([["any status", ""]] + @statuses, @filters[:status]) %>
+  <%= f.submit "Filter", class: "btn" %>
+  <%= link_to "Reset", jobs_path, class: "btn ghost" %>
+<% end %>
+
+<p class="dim"><%= @total %> matching</p>
+
+<table class="grid">
+  <thead>
+    <tr>
+      <th>job</th><th>type</th><th>queue</th><th>pri</th>
+      <th>status</th><th>attempt</th><th>wait</th><th>enqueued</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% @jobs.each do |job| %>
+      <tr>
+        <td><%= link_to short_id(job.id), job_path(job) %></td>
+        <td><%= job.job_type %></td>
+        <td><%= job.queue_name %></td>
+        <td><%= job.priority %></td>
+        <td><%= status_badge(job.status) %></td>
+        <td><%= job.attempt %>/<%= job.max_attempts %></td>
+        <td title="Enqueue to first execution"><%= ms(job.queue_wait_ms) %></td>
+        <td><%= ago(job.enqueued_at) %></td>
+      </tr>
+    <% end %>
+  </tbody>
+</table>
+
+<% if @jobs.empty? %><p class="dim">Nothing matches those filters.</p><% end %>
+
+<div class="pager">
+  <% if @page > 1 %>
+    <%= link_to "← previous", jobs_path(**@filters, page: @page - 1), class: "btn ghost" %>
+  <% end %>
+  <% if @total > @page * JobsController::PER_PAGE %>
+    <%= link_to "next →", jobs_path(**@filters, page: @page + 1), class: "btn ghost" %>
+  <% end %>
+</div>

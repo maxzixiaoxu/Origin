@@ -1,0 +1,22 @@
+<h1>Derivatives</h1>
+<p class="dim"><code><%= @source_key %></code></p>
+
+<div class="split">
+  <div class="card">
+    <h3>Original</h3>
+    <% if @source_url %>
+      <img src="<%= @source_url %>" alt="original" class="preview">
+    <% else %>
+      <p class="dim">Preview unavailable.</p>
+    <% end %>
+  </div>
+
+  <div class="grow">
+    <%# Polls only while something is still running; see the partial. %>
+    <%= turbo_frame_tag "derivatives",
+          src: status_upload_path(@anchor_id),
+          loading: :eager do %>
+      <p class="dim">Loading…</p>
+    <% end %>
+  </div>
+</div>

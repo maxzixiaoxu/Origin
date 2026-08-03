@@ -1,0 +1,58 @@
+<h1>Overview</h1>
+
+<%= turbo_frame_tag "live_stats", src: dashboard_stats_path, refresh: "2s", loading: :eager do %>
+  <%= render "dashboard/live_stats", queues: @queues, depths: @depths, dead_count: @dead_count %>
+<% end %>
+
+<div class="split">
+  <div class="grow">
+    <h2>Recent jobs</h2>
+    <table class="grid">
+      <thead>
+        <tr><th>job</th><th>type</th><th>queue</th><th>status</th><th>attempt</th><th>enqueued</th></tr>
+      </thead>
+      <tbody>
+        <% @recent.each do |job| %>
+          <tr>
+            <td><%= link_to short_id(job.id), job_path(job) %></td>
+            <td><%= job.job_type %></td>
+            <td><%= job.queue_name %></td>
+            <td><%= status_badge(job.status) %></td>
+            <td><%= job.attempt %>/<%= job.max_attempts %></td>
+            <td><%= ago(job.enqueued_at) %></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="side">
+    <h2>Last hour</h2>
+    <% if @stats.any? %>
+      <%
+        succeeded = @stats.sum { |s| s.succeeded.to_i }
+        failed    = @stats.sum { |s| s.failed.to_i }
+        dead      = @stats.sum { |s| s.dead.to_i }
+        waits     = @stats.filter_map { |s| s.wait_p95_ms }
+      %>
+      <dl class="stats">
+        <dt>succeeded</dt><dd><%= succeeded %></dd>
+        <dt>failed attempts</dt><dd><%= failed %></dd>
+        <dt>dead-lettered</dt><dd><%= dead %></dd>
+        <dt title="Enqueue to first execution. The real service-level signal: a queue can have fast handlers and still be badly backed up.">
+          queue wait p95
+        </dt>
+        <dd><%= waits.any? ? ms(waits.max) : "—" %></dd>
+      </dl>
+    <% else %>
+      <p class="dim">
+        No rollups yet. They are aggregated every 15 seconds by whichever
+        replica holds the rollup lock.
+      </p>
+    <% end %>
+
+    <h2>Workers</h2>
+    <p class="big"><%= @active_workers %></p>
+    <p class="dim small">distinct workers seen in the last 5 minutes</p>
+  </div>
+</div>

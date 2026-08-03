@@ -1,0 +1,103 @@
+<h1>Job <code><%= @job.id %></code></h1>
+
+<div class="row gap">
+  <%= status_badge(@job.status) %>
+  <span class="dim"><%= @job.job_type %> on <%= @job.queue_name %>, priority <%= @job.priority %></span>
+</div>
+
+<div class="actions">
+  <% unless @job.terminal? %>
+    <%= button_to "Cancel", cancel_job_path(@job), class: "btn" %>
+  <% end %>
+  <% if @job.replayable? %>
+    <%= button_to "Retry", retry_job_path(@job), class: "btn primary" %>
+  <% end %>
+</div>
+
+<% if @job.image_derivative? && (@source_url || @derivative_url) %>
+  <h2>Result</h2>
+  <div class="split">
+    <div class="card">
+      <h3>Original</h3>
+      <% if @source_url %><img src="<%= @source_url %>" class="preview"><% end %>
+    </div>
+    <div class="card">
+      <h3>Derivative</h3>
+      <% if @derivative_url %>
+        <img src="<%= @derivative_url %>" class="preview">
+      <% else %>
+        <p class="dim">Not produced<%= " yet" unless @job.terminal? %>.</p>
+      <% end %>
+    </div>
+  </div>
+<% end %>
+
+<h2>Timing</h2>
+<dl class="stats wide">
+  <dt title="Enqueue to first execution starting. The real service-level signal.">queue wait</dt>
+  <dd><%= ms(@job.queue_wait_ms) %></dd>
+  <dt>end to end</dt><dd><%= ms(@job.end_to_end_ms) %></dd>
+  <dt>attempts</dt><dd><%= @job.attempt %> of <%= @job.max_attempts %></dd>
+  <dt>enqueued</dt><dd><%= @job.enqueued_at&.iso8601 %></dd>
+  <dt>finished</dt><dd><%= @job.finished_at&.iso8601 || "—" %></dd>
+  <% if @job.trace_id.present? %>
+    <dt title="Shared by the browser request, Rails, the queue service, and the worker">trace</dt>
+    <dd><code><%= @job.trace_id %></code></dd>
+  <% end %>
+</dl>
+
+<%#
+  The attempt timeline is the most informative thing on this page. It shows
+  retries with their real backoff gaps, which worker ran each try, and -- for a
+  job whose worker died -- a 'lease expired' row followed by a success on a
+  different worker. That is the crash-recovery story, visible.
+%>
+<h2>Attempts</h2>
+<table class="grid">
+  <thead>
+    <tr><th>#</th><th>outcome</th><th>worker</th><th>duration</th><th>started</th><th>detail</th></tr>
+  </thead>
+  <tbody>
+    <% @attempts.each do |a| %>
+      <tr>
+        <td><%= a.attempt %></td>
+        <td><%= outcome_badge(a.outcome) %></td>
+        <td><code class="small"><%= a.worker_id %></code></td>
+        <td><%= ms(a.duration_ms) %></td>
+        <td><%= a.started_at&.iso8601 %></td>
+        <td class="small"><%= a.error.presence || a.summary %></td>
+      </tr>
+    <% end %>
+  </tbody>
+</table>
+<% if @attempts.empty? %><p class="dim">Not attempted yet.</p><% end %>
+
+<% if @job.last_error.present? %>
+  <h2>Last error</h2>
+  <pre class="err"><%= @job.last_error %></pre>
+<% end %>
+
+<% if @siblings.present? && @siblings.size > 1 %>
+  <h2>Other sizes from this upload</h2>
+  <table class="grid">
+    <thead><tr><th>job</th><th>size</th><th>priority</th><th>status</th></tr></thead>
+    <tbody>
+      <% @siblings.each do |s| %>
+        <tr class="<%= 'self' if s.id == @job.id %>">
+          <td><%= link_to short_id(s.id), job_path(s) %></td>
+          <td><%= s.payload_data["label"] %></td>
+          <td><%= s.priority %></td>
+          <td><%= status_badge(s.status) %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+<% end %>
+
+<h2>Payload</h2>
+<pre class="code"><%= JSON.pretty_generate(@job.payload_data) %></pre>
+
+<% if @job.result_data %>
+  <h2>Handler result</h2>
+  <pre class="code"><%= JSON.pretty_generate(@job.result_data) %></pre>
+<% end %>

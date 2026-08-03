@@ -1,0 +1,40 @@
+<h1>Upload an image</h1>
+
+<p class="lede">
+  One upload fans out into <strong>three jobs</strong>, submitted in the same
+  instant at different priorities. The thumbnail is priority 0 because someone
+  is waiting on it; the archive size is priority 9 because nobody is. Watch the
+  order they finish in.
+</p>
+
+<%= form_with url: uploads_path, multipart: true, class: "card" do |f| %>
+  <%= f.file_field :image, accept: "image/jpeg,image/png,image/webp", required: true %>
+  <%= f.submit "Upload and queue", class: "btn primary" %>
+  <p class="hint">
+    JPEG, PNG or WebP, up to <%= number_to_human_size(ObjectStore::MAX_UPLOAD_BYTES) %>.
+    A large photo makes the resize cost visible.
+  </p>
+<% end %>
+
+<table class="grid">
+  <thead>
+    <tr><th>size</th><th>width</th><th>priority</th><th>why</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>thumb</td><td>150px</td><td>0</td><td>user is watching</td></tr>
+    <tr><td>medium</td><td>640px</td><td>5</td><td>needed soon</td></tr>
+    <tr><td>large</td><td>1600px</td><td>9</td><td>archive, nobody waiting</td></tr>
+  </tbody>
+</table>
+
+<% if @recent.any? %>
+  <h2>Recent uploads</h2>
+  <ul class="list">
+    <% @recent.each do |upload| %>
+      <li>
+        <%= link_to File.basename(upload[:key]), upload_path(upload[:id]) %>
+        <span class="dim"><%= ago(upload[:at]) %></span>
+      </li>
+    <% end %>
+  </ul>
+<% end %>

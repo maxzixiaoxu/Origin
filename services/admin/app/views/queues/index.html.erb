@@ -1,0 +1,67 @@
+<h1>Queues</h1>
+
+<p class="lede">
+  Every setting is live. The queue service caches configuration for about a
+  second and drops that cache on write, so a change lands on the next dequeue --
+  no restart, no deploy.
+</p>
+
+<% @queues.each do |queue| %>
+  <% d = @depths[queue.name] || {} %>
+  <div class="card queue">
+    <div class="row">
+      <h2><%= queue.name %></h2>
+      <% if queue.paused %><span class="badge warn">paused</span><% end %>
+      <span class="dim">
+        <%= d["ready"] || 0 %> ready &middot;
+        <%= d["scheduled"] || 0 %> scheduled &middot;
+        <%= d["running"] || 0 %> running
+      </span>
+    </div>
+
+    <div class="actions">
+      <% if queue.paused %>
+        <%= button_to "Resume", resume_queue_path(queue.name), class: "btn primary" %>
+      <% else %>
+        <%= button_to "Pause", pause_queue_path(queue.name), class: "btn",
+              form: { data: { turbo_confirm: "Pause #{queue.name}? Submissions keep being accepted; nothing will be dispatched." } } %>
+      <% end %>
+    </div>
+
+    <%= form_with url: queue_path(queue.name), method: :patch, scope: :queue, class: "inline-form" do |f| %>
+      <label>
+        max concurrency
+        <%= f.number_field :max_concurrency, value: queue.max_concurrency, min: 0 %>
+        <span class="hint">in-flight ceiling across all workers, not per worker</span>
+      </label>
+
+      <label>
+        rate limit /sec
+        <%= f.number_field :rate_limit_per_sec, value: queue.rate_limit_per_sec, min: 1, placeholder: "unlimited" %>
+      </label>
+
+      <label>
+        burst
+        <%= f.number_field :rate_limit_burst, value: queue.rate_limit_burst, min: 1, placeholder: "unlimited" %>
+      </label>
+
+      <label>
+        max attempts
+        <%= f.number_field :max_attempts, value: queue.max_attempts, min: 1 %>
+      </label>
+
+      <label>
+        visibility timeout (s)
+        <%= f.number_field :visibility_timeout_sec, value: queue.visibility_timeout_sec, min: 1 %>
+        <span class="hint">
+          Only needs to outlast a few missed heartbeats, not the job duration --
+          workers renew while they work. Worst-case crash recovery is roughly
+          this plus one reaper tick.
+        </span>
+      </label>
+
+      <%= f.submit "Save", class: "btn" %>
+      <p class="hint">Blank fields are left unchanged.</p>
+    <% end %>
+  </div>
+<% end %>

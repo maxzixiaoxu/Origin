@@ -1,0 +1,44 @@
+source "https://rubygems.org"
+
+gem "rails", "~> 8.1.3", ">= 8.1.3.1"
+
+# Asset pipeline and Hotwire. The dashboard is server-rendered with Turbo
+# rather than a JS front end: the pages are tables and a handful of live
+# counters, and a SPA would add a build step plus an API surface to maintain
+# for nothing a Turbo frame refresh does not already give.
+gem "propshaft"
+gem "importmap-rails"
+gem "turbo-rails"
+gem "stimulus-rails"
+
+gem "pg", "~> 1.1"
+gem "puma", ">= 5.0"
+
+# HTTP client for the Go queue service. Every write goes through it; Rails
+# never writes to the job tables directly.
+gem "faraday", "~> 2.9"
+gem "faraday-retry", "~> 2.2"
+
+# S3-compatible object storage, used directly rather than through Active
+# Storage. Active Storage would insist on owning its own tables and migrations,
+# and Go owns the schema here. Uploading and presigning by hand is a few dozen
+# lines and keeps that boundary intact.
+gem "aws-sdk-s3", "~> 1.170"
+
+gem "tzinfo-data", platforms: %i[ windows jruby ]
+gem "bootsnap", require: false
+gem "thruster", require: false
+
+group :development, :test do
+  gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"
+  gem "bundler-audit", require: false
+
+  gem "rspec-rails", "~> 7.1"
+  # Stubs the Go service in request specs so they run without it present, and
+  # can assert exactly what Rails sends.
+  gem "webmock", "~> 3.24"
+end
+
+group :development do
+  gem "web-console"
+end

@@ -1,0 +1,30 @@
+<%#
+  Live counters, refreshed every 2 seconds by the enclosing Turbo Frame.
+
+  Depth comes from Redis via the queue service, not from Postgres. Postgres
+  knows which jobs exist; only Redis knows which are dispatchable right now, and
+  only Redis distinguishes ready from scheduled from leased.
+%>
+<%= turbo_frame_tag "live_stats" do %>
+  <div class="cards">
+    <% queues.each do |queue| %>
+      <% d = depths[queue.name] || {} %>
+      <div class="card stat <%= 'paused' if queue.paused %>">
+        <div class="row">
+          <strong><%= link_to queue.name, queues_path %></strong>
+          <% if queue.paused %><span class="badge warn">paused</span><% end %>
+        </div>
+        <div class="counters">
+          <span title="Waiting in the ready set"><b><%= d["ready"] || 0 %></b> ready</span>
+          <span title="Waiting for run_at: delays and retry backoff"><b><%= d["scheduled"] || 0 %></b> scheduled</span>
+          <span title="Currently leased by a worker"><b><%= d["running"] || 0 %></b> running</span>
+        </div>
+      </div>
+    <% end %>
+
+    <div class="card stat <%= 'alarm' if dead_count.positive? %>">
+      <div class="row"><strong><%= link_to "dead letter", dead_letter_index_path %></strong></div>
+      <div class="counters"><span><b><%= dead_count %></b> jobs</span></div>
+    </div>
+  </div>
+<% end %>
