@@ -1,6 +1,6 @@
 # Origin Distributed Derivative Image Processor
 
-A job queue using**Go** for the queue service and workers,
+A job queue using **Go** for the queue service and workers,
 **Rails** for the admin dashboard, **Redis** for the hot path, **PostgreSQL**
 for durability.
 
